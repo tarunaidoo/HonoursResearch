@@ -47,18 +47,17 @@ class MazeGenerator:
                     q.append(((nr, nc), path + [(nr, nc)]))
         return False # No path found
 
-    def generate_dfs_maze(self, size, start=None, goal=None):
-        """Generates a maze using a modified DFS (Recursive Backtracker) algorithm.
+    def generate_backtracking_maze(self, size, start=None, goal=None):
+        """
+        Generates a maze using a modified DFS (Recursive Backtracker) algorithm.
         This often creates mazes with more dead ends and longer paths.
         """
         rows, cols = size
-        # Initialize grid with all walls
-        grid = np.ones(size, dtype=int)
-
         # Ensure odd dimensions for proper wall/path carving
         if rows % 2 == 0: rows += 1
         if cols % 2 == 0: cols += 1
 
+        # Initialize grid with all walls
         grid = np.ones((rows, cols), dtype=int)
 
         stack = []
@@ -85,18 +84,17 @@ class MazeGenerator:
                 stack.pop()
 
         # Set start and goal (must be empty spots)
+        # Using a fixed start and goal for this type of maze is common, but
+        # you could also find a random empty spot if needed.
         maze_start = start if start else (1, 1)
         maze_goal = goal if goal else (rows - 2, cols - 2)
-
-        # Ensure start and goal are open, in case they were filled by mistake (shouldn't happen with this algorithm but for safety)
-        grid[maze_start] = 0
-        grid[maze_goal] = 0
-
+        
         maze = Maze(grid, start=maze_start, goal=maze_goal)
-
-        # Final check for path, regenerate if needed (unlikely for DFS mazes unless dimensions are too small)
+        
+        # A final validation check is good practice, but backtracking
+        # mazes are guaranteed to be solvable unless dimensions are too small.
         if not self._validate_maze(maze):
-            print("DFS maze generation failed to create a solvable maze. Retrying...")
-            return self.generate_dfs_maze(size, start, goal)
+            print("Backtracking maze generation failed to create a solvable maze. Retrying...")
+            return self.generate_backtracking_maze(size, start, goal)
 
         return maze
