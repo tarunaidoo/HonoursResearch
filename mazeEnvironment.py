@@ -50,22 +50,29 @@ class Maze:
         for r in range(self.rows):
             for c in range(self.cols):
                 if self.grid[r, c] == 1:
-                    maze_display[r, c] = '#' # Obstacle
+                    maze_display[r, c] = '#'  # Obstacle
                 else:
-                    maze_display[r, c] = '.' # Free space
+                    maze_display[r, c] = '.'  # Free space
 
         if path:
             for r, c in path:
                 if (r, c) != self.start and (r, c) != self.goal:
-                    maze_display[r, c] = '*' # Path
+                    maze_display[r, c] = '*'  # Path
 
         if self.start:
             maze_display[self.start[0], self.start[1]] = 'S'
         if self.goal:
             maze_display[self.goal[0], self.goal[1]] = 'G'
         if current_pos and current_pos != self.start and current_pos != self.goal:
-            maze_display[current_pos[0], current_pos[1]] = '@' # Current agent position
+            maze_display[current_pos[0], current_pos[1]] = '@'  # Current agent position
 
         for row in maze_display:
             print(" ".join(row))
         print("-" * (self.cols * 2))
+
+    def get_binary_grid(self):
+        """
+        Returns the maze grid as a NumPy array of 0s and 1s,
+        where 0 represents free space and 1 represents obstacles.
+        """
+        return self.grid.copy()

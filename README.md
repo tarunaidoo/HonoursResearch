@@ -1,146 +1,125 @@
-# HonoursResearch
+Okay, let's break down each class in your project, what it does, and why it's a necessary component for evaluating LLMs' maze planning abilities.
 
-# Research Plan
+1. Maze (in maze_environment.py)
+What it Does:
+The Maze class is the fundamental representation of your 2D maze environment. It stores the maze grid (a binary matrix where 0 is free space and 1 is an obstacle), and defines its start and goal positions. It provides essential methods for interacting with this environment:
 
-This section outlines the major stages of the project, breaking them down into manageable
-sub-tasks with estimated durations.
+_is_valid_position(): Checks if a given coordinate is within the maze boundaries.
 
-# 4.1 Phase 1: Preparation and Design (2 Weeks)
+get_neighbors(): Returns all valid (non-obstacle, within-bounds) adjacent positions from a given cell.
 
-This initial phase focuses on laying the groundwork for both the environment and experimental
-methodology. It ensures that a robust and flexible simulation framework is in
-place before conducting comparative evaluations.
-- Implement 2D maze environment. Develop a modular and efficient representation
-of 2D mazes using binary matrices (0 = free space, 1 = obstacle). This includes
-support for state initialisation, goal detection, and action constraints (up, down,
-left, right). The environment should allow for easy interfacing with both classical
-algorithms and LLM-based inputs.
-- Define maze generation routines with adjustable size and density. Implement
-a set of functions to generate random mazes with tunable parameters:
-    
-    – Size: from small (5 × 5) to large (50 × 50) grids.
+is_goal(): Checks if a given position is the maze's goal.
 
-    – Obstacle density: to control the ratio of walls to open paths, ensuring diverse levels of navigability.
+display(): Prints a human-readable ASCII representation of the maze, optionally showing a path or current agent position.
 
-    – Topological complexity: introduce structural features like dead ends, bottlenecks and multiple branches to test reasoning under varied conditions.
+Why You Need It:
+This class is the core simulation environment. You need it to:
 
-Maze validity must be guaranteed (i.e., at least one valid path from start to goal),
-which may require post-processing validation using BFS or A*.
-- Finalise evaluation metrics and scoring system. Define and standardise the metrics used to compare LLM-generated and classical paths, including:
+Define the Problem: It explicitly describes the maze problem that both classical algorithms and LLMs need to solve.
 
-    – Path length
+Standardize Input: It provides a consistent way to represent mazes, which can then be formatted for different solvers (e.g., as a NumPy array for classical algorithms, or a string for LLMs).
 
-    – Optimality ratio
+Enable Interaction: Search algorithms and path validation routines rely on its methods (get_neighbors, is_goal) to operate within the maze's rules. Without it, you wouldn't have a maze to navigate!
 
-    – Success rate (valid path reaching the goal)
+2. MazeGenerator (in maze_generators.py)
+What it Does:
+The MazeGenerator class is responsible for creating new maze instances. It includes methods to:
 
-    – Computation time (in seconds)
+generate_random_maze(): Creates mazes by randomly placing obstacles, and crucially, validates that there is at least one solvable path from start to goal (using a built-in BFS check) to ensure valid test cases.
 
-    – Token usage (for LLMs)
+generate_dfs_maze(): Implements a Recursive Backtracker (DFS-based) algorithm, which tends to produce mazes with more "complex" topological features like long winding paths and dead ends.
 
-    – Maze complexity score (based on entropy, average branching factor). 
-    
-Ensure each metric is computable for all models and algorithms to allow systematic comparison.
-Summarise the findings into a reference document to guide subsequent development
-and experimentation phases.
+_validate_maze(): A private helper method that uses BFS to confirm if a path exists.
 
-# 4.2 Phase 2: Baseline Implementation (2 Weeks)
-This phase establishes the traditional planning baselines which will serve as the ground
-truth and primary point of comparison for LLM-generated plans.
+Why You Need It:
+This class is essential for generating your experimental data (mazes). You need it to:
 
-- Implement classical algorithms (BFS, A*, DFS). Code the following algorithms
-from scratch or using standard libraries for transparency and control:
-    
-    - Breadth-First Search (BFS): Ideal for shortest paths in unweighted graphs, acts as an optimality benchmark.
-    - A* Search: Using Manhattan distance as a heuristic for efficient pathfinding in larger or sparser mazes.
-    - Depth-Limited Depth-First Search (DFS): Mimics constrained-memory agents and provides a contrast to BFS/A*.
+Control Experiment Variables: It allows you to systematically create mazes of varying size (e.g., 5x5 to 50x50) and obstacle_density, which directly impacts maze difficulty.
 
-Each implementation should allow traceable path recovery, step counting and runtime
-logging.
+Ensure Solvability: The validation step is critical. You only want to test solvers on mazes that can be solved, otherwise, a "failure" from a solver might just mean the maze itself was impossible, not that the solver was bad.
 
-- Validate correctness across all generated maze types. Ensure algorithms
-can:
-    - Handle edge cases such as completely open mazes or near-blocked mazes.
-    - Detect unreachable goals and return failure cleanly.
-    - Match known solutions in hand-designed mazes for debugging and validation.
+Test Generalization: By generating diverse mazes (random, DFS-generated, varying complexity), you can rigorously test how well classical algorithms and LLMs generalize their planning abilities across different problem structures.
 
-    Compare outputs visually or via automated assertions against a reference solver.
+3. MazeSolver (in maze_solvers.py)
+What it Does:
+The MazeSolver class contains implementations of classical pathfinding algorithms:
 
-- Benchmark their performance across maze sizes and complexities. Systematically
-evaluate algorithm efficiency and scalability by recording:
-    - Runtime as a function of maze size and obstacle density.
-    - Memory usage and number of nodes expanded.
-    - Optimality (path length and validity).
-Results will inform difficulty gradations for use in LLM testing and help define a
-maze complexity scale.
+bfs(): Breadth-First Search, which finds the shortest path in unweighted graphs (like your maze grid).
 
-# 4.3 Phase 3: LLM Integration (3-4 Weeks)
-This phase focuses on incorporating language models into the pipeline and tailoring
-prompts to optimise their performance.
-• Construct and test prompt formats. Design prompt templates that clearly
-and consistently communicate:
-– Maze structure (e.g., flattened array, coordinate list, or ASCII grid).
+dfs(): Depth-First Search, which explores as deeply as possible along each branch before backtracking. A depth limit can be applied to simulate memory-constrained agents.
 
-– Problem definition (start and goal positions, valid moves).
-– Output expectations (e.g., list of coordinates or directional steps).
-Explore variations including zero-shot, few-shot, and chain-of-thought prompts to
-determine which yields the most valid plans.
-• Interface with LLMs (using OpenAI API) for maze planning. Programmatically
-interact with different models (GPT-2, GPT-3.5, GPT-4). Key tasks
-include:
-– Tokenising and sending input prompts.
-– Parsing model outputs into usable formats (e.g., coordinate lists).
-– Logging response times, token usage, and raw completions for analysis.
-• Validate LLM outputs against classical paths and simulation rules. For
-each generated path:
-– Check for syntactic correctness (format, number of steps).
-– Simulate path traversal to confirm it avoids obstacles and reaches the goal.
-– Compare path length and trajectory to those of classical algorithms.
-Track failure cases (e.g., hallucinated moves, invalid syntax) for further analysis
-and prompt refinement.
+a_star(): A* search, an informed search algorithm that uses a heuristic (Manhattan distance in this case) to efficiently find the shortest path, especially in larger or sparser mazes.
 
-# 4.4 Phase 4: Evaluation and Analysis (2 Weeks)
-This phase implements the core experimental comparisons between LLM-based planning
-and traditional methods.
-• Run experiments on multiple mazes (100+ instances per configuration).
-For each configuration (maze size, complexity, LLM type, prompt type), generate
-and test a statistically significant number of mazes.
-• Collect metrics for all planning methods. Gather both quantitative and qualitative
-measures:
-– Success rate, path length, optimality ratio, and runtime.
-– Token overhead and prompt-to-response latency for LLMs.
-– Complexity-adjusted performance: measuring effectiveness relative to maze difficulty.
-• Analyse LLM performance trends based on model size and maze complexity.
-Identify:
-– Whether larger models (e.g., GPT-4) generalise better to complex mazes.
-– Which prompting techniques lead to higher plan validity and optimality.
-– Breakdown of error types (e.g., invalid plans, partially correct plans).
-Results will be visualised using heatmaps, bar charts, and performance curves.
+Why You Need It:
+This class provides the ground truth and baseline performance for your evaluation. You need it to:
 
-# 4.5 Phase 5: Reporting and Refinement (2 Weeks)
-This final phase involves synthesising the findings into a structured research report and
-ensuring the quality of deliverables.
-• Consolidate results and interpret findings. Summarise key insights on:
-– Relative strengths and weaknesses of LLM planning versus traditional algorithms.
-– How prompt design, model scale, and maze features affect outcomes.
-– Potential areas for future improvement or hybrid approaches.
-• Write the full report integrating charts and tables. Document the full
-pipeline, methodology, and results using LaTeX. Include:
-– Diagrams of example mazes and paths.
-– Tables summarising metric comparisons.
-– Figures visualising trends in LLM behavior.
-• Conduct final review Ensure:
-– All references and citations are complete and hyperlinked.
-– The report is checked for originality and free of plagiarism.
-– An AI usage statement is completed in line with institutional policies.
+Obtain Optimal Paths: BFS and A* (with an admissible heuristic) will find the optimal (shortest) paths, which are crucial for calculating the "optimality ratio" of other solvers, including LLMs.
 
-# 4.6 Contingency Planning and Flexibility
-Although the project is organised into a structured four-month timeline, a degree of flexibility
-is included to accommodate real-world variability in task complexity and execution.
-If a phase is completed earlier than expected, the surplus time will be used to conduct
-additional experiments, explore more advanced prompt engineering strategies, or expand
-the evaluation framework.
-Should unexpected delays arise—such as extended API response times, challenges in
-path validation, or model output inconsistencies—subsequent phases may be adjusted
-accordingly. This ensures that the overall quality and depth of the research are preserved
-without compromising deliverables.
+Establish Benchmarks: These classical algorithms serve as a strong baseline against which you compare the LLMs. They represent established, efficient planning capabilities.
+
+Measure Performance: They allow you to record metrics like computation time and nodes expanded, which are vital for understanding their efficiency and scalability across different maze complexities. This data helps in defining difficulty gradations for LLM testing.
+
+4. PathEvaluator (in path_evaluator.py)
+What it Does:
+The PathEvaluator class is responsible for calculating various metrics for any given path within a maze. Its key methods include:
+
+is_valid_path(): Checks if a proposed path adheres to maze rules (starts at 'S', ends at 'G', avoids obstacles, only moves orthogonally).
+
+calculate_path_length(): Determines the number of steps in a path.
+
+calculate_optimality_ratio(): Compares the path length to the known optimal path length (usually from BFS/A*).
+
+calculate_success_rate(): Simple boolean indicating if the path is valid and reaches the goal.
+
+calculate_maze_complexity_score(): Provides a heuristic measure of how complex a maze is (currently based on obstacle density, but can be expanded).
+
+evaluate_path(): A consolidated method to compute all relevant metrics for a given path.
+
+Why You Need It:
+This class is the measurement instrument for your experiment. You need it to:
+
+Quantify Performance: It turns raw paths into quantifiable data points (length, optimality, success). This is how you objectively compare different planning methods.
+
+Ensure Fairness: By standardizing how paths are evaluated, you ensure a fair comparison between classical algorithms and LLMs.
+
+Identify Failure Modes: By checking path validity, you can systematically track cases where LLMs generate invalid or incomplete plans.
+
+Analyse Trends: The metrics it produces (especially in conjunction with maze_complexity_score) allow you to analyze how performance changes with maze difficulty.
+
+5. LLMInterface (in llm_interface.py)
+What it Does:
+The LLMInterface class handles all communication with Large Language Models (specifically OpenAI's API in this case). It provides functionalities for:
+
+format_maze_for_prompt(): Converts a Maze object into various string formats (ASCII grid, coordinate list, flattened array) that can be inserted into an LLM prompt.
+
+construct_prompt(): Builds the full textual prompt for the LLM, incorporating the maze representation, instructions, and handling different prompt types (zero-shot, few-shot, chain-of-thought).
+
+parse_llm_output(): Attempts to extract a list of coordinates (the planned path) from the raw text output of the LLM, robustly handling different formatting variations.
+
+get_llm_plan(): Sends the constructed prompt to the OpenAI API, receives the response, and then parses it into a usable path format, also logging token usage and response time.
+
+Why You Need It:
+This class is the bridge to the LLM's planning capabilities. You need it to:
+
+Integrate LLMs: It encapsulates the complexities of interacting with an external API, allowing the rest of your experiment code to remain clean and focused on evaluation.
+
+Experiment with Prompts: It's the dedicated place to design and test various prompt engineering strategies, which are critical for eliciting good planning behavior from LLMs.
+
+Extract LLM Output: LLMs return free-form text. This class is crucial for transforming that text into structured data (the path) that can be evaluated by PathEvaluator.
+
+Collect LLM-Specific Metrics: It logs token usage and API response times, which are unique and important metrics for LLM evaluation.
+
+6. MockLLMInterface (also in llm_interface.py)
+What it Does:
+The MockLLMInterface is a simplified version of LLMInterface that does not actually call the OpenAI API. Instead, it provides predefined or very basic, simulated responses.
+
+Why You Need It:
+This class is invaluable for development, debugging, and initial testing. You need it to:
+
+Develop Offline: Work on your main.py experiment logic, PathEvaluator, and other components without needing an internet connection or making actual API calls.
+
+Save Costs: Avoid incurring OpenAI API charges during development and repeated testing cycles.
+
+Speed Up Development: Mock responses are instantaneous, significantly speeding up testing compared to waiting for real API latency.
+
+Ensure Code Flow: Verify that your data structures, function calls, and error handling (for parsing) work as expected before introducing the complexities and costs of a real LLM. It acts as a placeholder until you're ready to integrate the live API.
