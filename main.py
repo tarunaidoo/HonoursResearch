@@ -1,12 +1,15 @@
+#API KEY: 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
+
 import os
 import pandas as pd
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import seaborn as sns
 import datetime
-import pickle
-import numpy as np # Needed for obstacle density calculation
-
+import pickle 
+import numpy as np
+import json 
+import concurrent.futures
 # Import classes from their respective modules
 from mazeEnvironment import Maze
 from mazeGenerator import MazeGenerator
@@ -14,100 +17,132 @@ from mazeSolver import MazeSolver
 from pathEval import PathEvaluator
 from llm_interface import LLMInterface, MockLLMInterface # Import both real and mock
 
-def load_mazes(file_path="pregenerated_mazes.pkl"):
+# --- MODIFIED FUNCTION SIGNATURE ---
+def run_experiment(mazes, llm_interface, llm_models, depth_limits=[None, 10, 20], llm_prompt_types=["zero_shot", "chain_of_thought"], llm_maze_formats=["ascii", "coordinate_list"]):
     """
-    Loads a list of Maze objects from a pickle file.
-    
-    Args:
-        file_path (str): The path to the file containing the mazes.
-
-    Returns:
-        list: A list of Maze objects.
-    """
-    if not os.path.exists(file_path):
-        raise FileNotFoundError(f"Maze file not found at {file_path}. Please run generate_mazes.py first.")
-    print(f"Loading mazes from {file_path}...")
-    with open(file_path, "rb") as f:
-        return pickle.load(f)
-
-def run_experiment(mazes, llm_interface, depth_limits=[None, 10, 20], llm_prompt_types=["zero_shot", "chain_of_thought"], llm_maze_formats=["ascii", "coordinate_list"]):
-    """
-    Runs an experiment on a pre-generated set of mazes.
-    
-    Args:
-        mazes (list): A list of Maze objects to be used for the experiment.
-        llm_interface (LLMInterface or MockLLMInterface): The interface to the LLM.
-        depth_limits (list): DFS depth limits to test.
-        llm_prompt_types (list): Types of LLM prompts to test.
-        llm_maze_formats (list): Formats of the maze representation for the LLM prompt.
-
-    Returns:
-        pd.DataFrame: A DataFrame containing all experiment results.
+    Runs an experiment on a pre-generated set of mazes, skipping classical solvers 
+    for extremely large mazes and testing multiple LLM models.
     """
     results = []
+    
+    # Define the size at which we stop running BFS/A* (e.g., 1024x1024 or smaller)
+    CLASSICAL_SOLVER_LIMIT = 1024 
 
     for maze in tqdm(mazes, desc="Processing pre-generated mazes"):
         evaluator = PathEvaluator(maze)
         solver = MazeSolver(maze)
         
         # Determine maze properties from the loaded object
-        size = (maze.rows, maze.cols)
-        density = np.sum(maze.grid == 1) / (maze.rows * maze.cols)
-        
-        # Classical Algorithms
-        algorithms = {
-            "BFS": solver.bfs,
-            "A_Star": solver.a_star,
-            "DFS_NoLimit": lambda: solver.dfs(depth_limit=None)
-        }
-        
-        for dl in depth_limits:
-            algorithms[f"DFS_DL_{dl if dl is not None else 'Inf'}"] = lambda dl=dl: solver.dfs(depth_limit=dl)
+        rows, cols = size = (maze.rows, maze.cols)
+        density = np.sum(maze.grid == 1) / (rows * cols)
+        scenario = getattr(maze, 'scenario', 'N/A')
 
-        optimal_path, optimal_time, _ = solver.bfs()
-        optimal_path_length = evaluator.calculate_path_length(optimal_path) if optimal_path else 0
-        
-        for alg_name, alg_func in algorithms.items():
-            path, comp_time, nodes_expanded = alg_func()
-            metrics = evaluator.evaluate_path(path, optimal_path_length, computation_time=comp_time)
-            results.append({
-                "maze_size": size,
-                "obstacle_density": density,
-                "maze_complexity_score": metrics["maze_complexity_score"],
-                "algorithm": alg_name,
-                "path_length": metrics["path_length"],
-                "optimality_ratio": metrics["optimality_ratio"],
-                "success_rate": metrics["success_rate"],
-                "computation_time": metrics["computation_time"],
-                "nodes_expanded": nodes_expanded,
-                "token_usage": None,
-                "raw_output": None,
-                "path_validity_check": evaluator.is_valid_path(path)
-            })
+        # Check if the maze size exceeds the classical solver limit
+        run_classical_solvers = rows <= CLASSICAL_SOLVER_LIMIT and cols <= CLASSICAL_SOLVER_LIMIT
 
-        # LLM Experiments
-        for prompt_type in llm_prompt_types:
-            for maze_format in llm_maze_formats:
-                llm_path, llm_time, llm_tokens, llm_raw_output = llm_interface.get_llm_plan(
-                    maze, prompt_type=prompt_type, maze_format=maze_format
-                )
-                llm_metrics = evaluator.evaluate_path(llm_path, optimal_path_length,
-                                                     computation_time=llm_time, token_usage=llm_tokens)
+        # 1. Determine the Optimal Path Length (for evaluation)
+        optimal_path, optimal_time, nodes_expanded_bfs = (None, None, None)
+        optimal_path_length = 0
+        
+        if run_classical_solvers:
+            # Run BFS to find the optimal path length (Required for Optimality Ratio calculation)
+            optimal_path, optimal_time, nodes_expanded_bfs = solver.bfs()
+            optimal_path_length = evaluator.calculate_path_length(optimal_path) if optimal_path else 0
+        
+        # 2. Classical Algorithms
+        if run_classical_solvers:
+            algorithms = {
+                "BFS": lambda: (optimal_path, optimal_time, nodes_expanded_bfs), # Use the already calculated BFS results
+                "A_Star": solver.a_star,
+                "DFS_NoLimit": lambda: solver.dfs(depth_limit=None)
+            }
+            
+            for dl in depth_limits:
+                # Note: The DFS lambda function captures the current dl value via default argument
+                algorithms[f"DFS_DL_{dl if dl is not None else 'Inf'}"] = lambda dl=dl: solver.dfs(depth_limit=dl)
+
+            for alg_name, alg_func in algorithms.items():
+                path, comp_time, nodes_expanded = alg_func()
+                metrics = evaluator.evaluate_path(path, optimal_path_length, computation_time=comp_time)
                 results.append({
                     "maze_size": size,
                     "obstacle_density": density,
-                    "maze_complexity_score": llm_metrics["maze_complexity_score"],
-                    "algorithm": f"LLM_{prompt_type}_{maze_format}",
-                    "path_length": llm_metrics["path_length"],
-                    "optimality_ratio": llm_metrics["optimality_ratio"],
-                    "success_rate": llm_metrics["success_rate"],
-                    "computation_time": llm_metrics["computation_time"],
-                    "nodes_expanded": None,
-                    "token_usage": llm_metrics["token_usage"],
-                    "raw_output": llm_raw_output,
-                    "path_validity_check": evaluator.is_valid_path(llm_path)
+                    "maze_complexity_score": metrics["maze_complexity_score"],
+                    "algorithm": alg_name,
+                    "path_length": metrics["path_length"],
+                    "optimality_ratio": metrics["optimality_ratio"],
+                    "success_rate": metrics["success_rate"],
+                    "computation_time": metrics["computation_time"],
+                    "nodes_expanded": nodes_expanded,
+                    "token_usage": None,
+                    "raw_output": None,
+                    "path_validity_check": evaluator.is_valid_path(path),
+                    "scenario": scenario
                 })
+        else:
+            tqdm.write(f"Skipping classical solvers for large maze size: {size}. Only running LLM tests.")
+
+
+        # 3. LLM Experiments (Run for ALL mazes)
+        for model_name in llm_models: # <-- NEW LOOP HERE
+            for prompt_type in llm_prompt_types:
+                for maze_format in llm_maze_formats:
+                    llm_path, llm_time, llm_tokens, llm_raw_output = llm_interface.get_llm_plan(
+                        maze, 
+                        model_name=model_name, # <-- Pass the model name
+                        prompt_type=prompt_type, 
+                        maze_format=maze_format
+                    )
+                    
+                    llm_metrics = evaluator.evaluate_path(llm_path, optimal_path_length,
+                                                        computation_time=llm_time, token_usage=llm_tokens)
+                    results.append({
+                        "maze_size": size,
+                        "obstacle_density": density,
+                        "maze_complexity_score": llm_metrics["maze_complexity_score"],
+                        "algorithm": f"LLM_{model_name}_{prompt_type}_{maze_format}", # <-- Updated Algorithm Name
+                        "path_length": llm_metrics["path_length"],
+                        "optimality_ratio": llm_metrics["optimality_ratio"],
+                        "success_rate": llm_metrics["success_rate"],
+                        "computation_time": llm_metrics["computation_time"],
+                        "nodes_expanded": None,
+                        "token_usage": llm_metrics["token_usage"],
+                        "raw_output": llm_raw_output,
+                        "path_validity_check": evaluator.is_valid_path(llm_path),
+                        "scenario": scenario
+                    })
     return pd.DataFrame(results)
+
+# --- load_mazes function unchanged ---
+def load_mazes(file_path="pregenerated_mazes.json"):
+    """
+    Loads maze data from a JSON file and reconstructs a list of Maze objects.
+    """
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"Maze file not found at {file_path}. Please run create_save_mazes.py first.")
+    
+    print(f"Loading mazes from {file_path}...")
+    with open(file_path, "r") as f: 
+        mazes_data = json.load(f)
+        
+    reconstructed_mazes = []
+    for maze_dict in mazes_data:
+        grid_array = np.array(maze_dict['grid'], dtype=int)
+        start_coords = tuple(maze_dict['start'])
+        goal_coords = tuple(maze_dict['goal'])
+        
+        maze = Maze(
+            grid_array, 
+            start=start_coords, 
+            goal=goal_coords
+        )
+        
+        maze.scenario = maze_dict.get('scenario', 'default_scenario') 
+        
+        reconstructed_mazes.append(maze)
+        
+    return reconstructed_mazes
+# -----------------------------------
 
 def analyze_and_visualize_results(df):
     """Generates and displays analysis plots from the experiment results."""
@@ -125,8 +160,10 @@ def analyze_and_visualize_results(df):
     plt.show()
 
     plt.figure(figsize=(12, 6))
-    sns.lineplot(data=df[df["success_rate"] == 1], x="maze_complexity_score", y="optimality_ratio", hue="algorithm", marker='o')
-    plt.title("Optimality Ratio vs. Maze Complexity")
+    # Filter out cases where optimality is meaningless (no path found by BFS, or skipped)
+    sns.lineplot(data=df[(df["success_rate"] == 1) & (df["optimality_ratio"] > 0)], 
+                 x="maze_complexity_score", y="optimality_ratio", hue="algorithm", marker='o')
+    plt.title("Optimality Ratio vs. Maze Complexity (Successful Solvers Only)")
     plt.ylabel("Optimality Ratio (Actual/Optimal)")
     plt.xlabel("Maze Complexity Score")
     plt.grid(True)
@@ -158,16 +195,24 @@ if __name__ == "__main__":
     
     # 1. Load the pre-generated mazes from the file.
     try:
-        pregenerated_mazes = load_mazes()
+        pregenerated_mazes = load_mazes("pregenerated_mazes.json") 
     except FileNotFoundError as e:
         print(e)
-        print("Exiting. Please run the 'generate_mazes.py' script first to create the dataset.")
+        print("Exiting. Please run the 'create_save_mazes.py' script first to create the dataset.")
         exit()
 
-    # 2. Initialize the LLM client.
-    # To use the real OpenAI API, uncomment the following and set your API key
-    # os.environ["OPENAI_API_KEY"] = "YOUR_OPENAI_API_KEY"
-    # llm_client = LLMInterface(api_key=os.getenv("OPENAI_API_KEY"))
+    # 2. Initialize the LLM client and define models.
+    
+    # Define the models to test (e.g., small, medium, large)
+    LLM_MODELS_TO_TEST = [
+        "gpt-3.5-turbo",      # Smallest/Fastest
+        "gpt-4-turbo",        # Medium/Balanced
+        "gpt-4o"              # Latest/Powerful
+    ]
+    
+    # Use the real LLMInterface when ready, but you MUST provide an API key.
+    os.environ["OPENAI_API_KEY"] = "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"
+    llm_client = LLMInterface(api_key=os.getenv("OPENAI_API_KEY"))
 
     # For testing without a real API key, use the MockLLMInterface:
     llm_client = MockLLMInterface()
@@ -177,7 +222,8 @@ if __name__ == "__main__":
     test_results_df = run_experiment(
         pregenerated_mazes,
         llm_client,
-        depth_limits=[None], # Only one DFS type for quick testing
+        llm_models=LLM_MODELS_TO_TEST, # <-- Passed to run_experiment
+        depth_limits=[None], 
         llm_prompt_types=["zero_shot"],
         llm_maze_formats=["ascii"]
     )
