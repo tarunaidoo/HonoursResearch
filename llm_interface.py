@@ -227,18 +227,46 @@ import time
 import re
 from openai import OpenAI
 from mazeEnvironment import Maze 
-import json # Changed from 'ast' to 'json' for efficient parsing
-import numpy as np # Needed for MockLLMInterface simple path generation
+import json # Used for parsing tool call arguments
+import numpy as np 
+import ast 
 
 class LLMInterface:
     def __init__(self, api_key, model_name="gpt-3.5-turbo"):
         self.client = OpenAI(api_key=api_key)
         self.model_name = model_name
 
+    # --- NEW: Define the tool schema for the LLM to use ---
+    PATH_SUBMISSION_TOOL = [
+        {
+            "type": "function",
+            "function": {
+                "name": "submit_path",
+                "description": "Submits the final solution path as a list of coordinates from start 'S' to goal 'G'.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "array",
+                            "description": "The list of path coordinates, where each element is a list of two integers: [row, column]. Must start at S and end at G.",
+                            "items": {
+                                "type": "array",
+                                "items": {"type": "integer"},
+                                "minItems": 2,
+                                "maxItems": 2
+                            }
+                        }
+                    },
+                    "required": ["path"],
+                },
+            }
+        }
+    ]
+
     def format_maze_for_prompt(self, maze: Maze, format_type="ascii"):
         """
         Formats the maze into a string representation for the LLM.
-        Optimized to use list comprehensions and single join operations.
+        Optimized for string handling and token count (removed spaces in ASCII).
         """
         if format_type == "ascii":
             grid_lines = []
@@ -253,7 +281,7 @@ class LLMInterface:
                         row_chars.append('#')
                     else:
                         row_chars.append('.')
-                # EFFICIENCY: Use NO separator to reduce token count (faster/cheaper)
+                # EFFICIENCY: Removed space separator to reduce tokens/latency
                 grid_lines.append("".join(row_chars)) 
             return "\n".join(grid_lines).strip()
         
@@ -287,63 +315,58 @@ class LLMInterface:
     def construct_prompt(self, maze: Maze, prompt_type="zero_shot", maze_format="ascii", examples=None):
         maze_representation = self.format_maze_for_prompt(maze, maze_format)
 
-        # EFFICIENCY: Instruct JSON output for reliable and fast parsing
-        base_instruction = "You are an AI assistant designed to solve mazes. Your task is to find a path from the 'S' (start) to the 'G' (goal) in the provided maze. You can only move up, down, left, or right. Avoid '#' (obstacles). **Your final output MUST be a JSON object with a single key 'path' containing a list of [row, column] coordinates. Do not include any text outside the JSON.** Example JSON: {\"path\": [[0,0], [0,1], [1,1]]}"
+        # Base instruction is now focused on using the tool
+        base_instruction = "You are an AI assistant designed to solve mazes. Your task is to find a path from 'S' to 'G' by only moving up, down, left, or right, avoiding '#'. **You MUST call the `submit_path` tool with the path coordinates to provide your final answer.**"
 
         if prompt_type == "zero_shot":
-            prompt = f"{base_instruction}\n\nMaze:\n{maze_representation}\n\nJSON Output:"
+            prompt = f"{base_instruction}\n\nMaze:\n{maze_representation}"
         elif prompt_type == "few_shot":
             if not examples:
                 raise ValueError("Few-shot prompting requires examples.")
             example_str = ""
             for ex_maze, ex_path in examples:
                 example_maze_rep = self.format_maze_for_prompt(ex_maze, maze_format)
-                example_str += f"Maze:\n{example_maze_rep}\nJSON Output: {ex_path}\n\n"
-            prompt = f"{base_instruction}\n\n{example_str}Maze:\n{maze_representation}\n\nJSON Output:"
+                # Note: Few-shot path should be the tool call arguments, e.g., '{"path": [[...]]}'
+                example_str += f"Maze:\n{example_maze_rep}\nTool Call: {ex_path}\n\n"
+            prompt = f"{base_instruction}\n\n{example_str}Maze:\n{maze_representation}"
         elif prompt_type == "chain_of_thought":
-            # CoT adds overhead, but we instruct the final answer to be JSON
-            prompt = f"{base_instruction}\n\nThink step-by-step to find the path. First, analyze the maze, then describe your reasoning, and finally, provide the JSON path.\n\nMaze:\n{maze_representation}\n\nThought Process:"
+            prompt = f"{base_instruction}\n\nThink step-by-step to find the path. First, analyze the maze, then describe your reasoning, and finally, call the `submit_path` tool with the coordinates.\n\nMaze:\n{maze_representation}\n\nThought Process:"
         else:
             raise ValueError("Unsupported prompt type.")
             
         return prompt
 
-    def parse_llm_output(self, output_text):
+    def parse_llm_output(self, response_message):
         """
-        Parses the LLM's JSON output string into a list of (row, col) tuples.
-        EFFICIENCY: Uses standard json library for fast and robust parsing.
+        Parses the LLM's response message object to extract the path from the tool call.
+        EFFICIENCY: Uses the structured tool call for robust and fast parsing.
         """
-        try:
-            # Attempt to find and load the JSON block
-            # For CoT, the LLM might wrap the JSON in text, so we look for the first '{' and last '}'
-            match = re.search(r'\{.*\}', output_text, re.DOTALL)
-            if not match:
-                raise json.JSONDecodeError("No JSON structure found.", output_text, 0)
-            
-            data = json.loads(match.group(0))
-            path_list = data.get("path", [])
-            
-            # Convert list of lists (from JSON) to list of tuples (expected format)
-            # This uses a list comprehension for efficiency
-            path = [tuple(p) for p in path_list]
-
-            # Basic validation
-            if all(isinstance(p, tuple) and len(p) == 2 for p in path):
-                return path
-
-            return []
-        except json.JSONDecodeError as e:
-            # print(f"Error decoding JSON from LLM output: {e}\nOutput: {output_text}")
-            return []
-        except Exception as e:
-            # print(f"General error parsing LLM output: {e}\nOutput: {output_text}")
-            return []
+        if response_message.tool_calls:
+            # We enforce a single tool call via tool_choice in get_llm_plan
+            tool_call = response_message.tool_calls[0]
+            if tool_call.function.name == "submit_path":
+                try:
+                    # Arguments are returned as a JSON string
+                    arguments = json.loads(tool_call.function.arguments)
+                    path_list = arguments.get("path", [])
+                    
+                    # Convert list of lists (from tool args) to list of tuples (expected by evaluator)
+                    path = [tuple(p) for p in path_list]
+                    
+                    if all(isinstance(p, tuple) and len(p) == 2 for p in path):
+                        return path
+                except Exception as e:
+                    # print(f"Error processing tool arguments: {e}")
+                    return []
+        
+        # Fallback if the model failed to use the tool
+        return []
 
     # --- MODIFIED FUNCTION ---
     def get_llm_plan(self, maze: Maze, model_name=None, prompt_type="zero_shot", maze_format="ascii", examples=None, max_tokens=256, temperature=0.7):
         """
-        Calls the OpenAI API to get a path plan.
-        EFFICIENCY: Now includes 'response_format' to force JSON output.
+        Calls the OpenAI API to get a path plan, leveraging Tool Use for structured output
+        and reduced parsing latency.
         """
         final_model = model_name if model_name else self.model_name
         
@@ -357,28 +380,33 @@ class LLMInterface:
                 messages=messages,
                 max_tokens=max_tokens,
                 temperature=temperature,
-                # CRITICAL EFFICIENCY CHANGE: Force the model to output a JSON object
-                response_format={"type": "json_object"} 
+                # EFFICIENCY 1: Define the available tools
+                tools=self.PATH_SUBMISSION_TOOL,
+                # EFFICIENCY 2: Force the model to use the tool for guaranteed, fast output structure
+                tool_choice={"type": "function", "function": {"name": "submit_path"}}
             )
             end_time = time.time()
-            response_text = response.choices[0].message.content.strip()
+            
+            # The response is a message object containing tool call data
+            response_message = response.choices[0].message
+            # Store the raw object string for logging (raw_output field)
+            response_text = str(response_message.tool_calls[0].function.arguments) if response_message.tool_calls else str(response_message)
             token_usage = response.usage.total_tokens if response.usage else None
 
-            # Parsing is now much cleaner because we forced JSON output
-            parsed_path = self.parse_llm_output(response_text)
+            # Parse the tool call result
+            parsed_path = self.parse_llm_output(response_message)
 
             return parsed_path, end_time - start_time, token_usage, response_text
         except Exception as e:
             # print(f"Error calling OpenAI API: {e}")
             return [], None, None, f"API Error: {e}"
 
-# Mock LLM Interface remains largely the same, but imports numpy for simplicity.
+# Mock LLM Interface remains largely the same
 class MockLLMInterface:
     def __init__(self, api_key=None, model_name=None):
         pass
         
     def format_maze_for_prompt(self, maze, format_type):
-        # Replicated logic for rough mock prompt generation/length
         if format_type == "ascii":
             grid_lines = []
             for r in range(maze.rows):
@@ -405,7 +433,6 @@ class MockLLMInterface:
         # Mock parsing simply returns a dummy path
         return [(0,0), (0,1), (1,1)]
 
-    # --- MOCK FUNCTION WITH TIMING AND MODEL SCALING ---
     def get_llm_plan(self, maze, model_name=None, prompt_type="zero_shot", maze_format="ascii", examples=None, max_tokens=256, temperature=0.7):
         prompt = self.construct_prompt(maze, prompt_type, maze_format, examples)
         
@@ -424,7 +451,6 @@ class MockLLMInterface:
         if prompt_type == "chain_of_thought":
              SCALER *= 1.5 
 
-        # Exponential scaling for very large context windows (the main time drain)
         if input_token_count > 5000:
              SCALER *= 2.0
             
@@ -433,17 +459,17 @@ class MockLLMInterface:
         MAX_MOCK_TIME = 120.0
         simulated_time = min(simulated_time, MAX_MOCK_TIME)
         
-        # Simulate the wait time
         time.sleep(simulated_time)
 
         # Generate Mock Output
         mock_path = [maze.start]
         if maze.rows > 1 and maze.cols > 1:
-              mock_path.append(tuple(np.add(maze.start, (1, 0)))) # Try to move one step
+              mock_path.append(tuple(np.add(maze.start, (1, 0)))) 
         mock_path.append(maze.goal)
 
         output_token_count = max_tokens
         total_token_usage = input_token_count + output_token_count
-        mock_output_text = f"{{\"path\": {mock_path}}}" # Mocked JSON output for consistency
+        # Mocked tool call arguments for consistency
+        mock_output_text = f"{{\"path\": {[[r, c] for r, c in mock_path]}}}" 
 
         return mock_path, simulated_time, total_token_usage, mock_output_text
