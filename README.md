@@ -123,3 +123,8 @@ Save Costs: Avoid incurring OpenAI API charges during development and repeated t
 Speed Up Development: Mock responses are instantaneous, significantly speeding up testing compared to waiting for real API latency.
 
 Ensure Code Flow: Verify that your data structures, function calls, and error handling (for parsing) work as expected before introducing the complexities and costs of a real LLM. It acts as a placeholder until you're ready to integrate the live API.
+
+
+----------------------------------------------------------------
+To run:
+1. python3 
