@@ -3,42 +3,48 @@ import os
 import numpy as np
 from tqdm import tqdm
 from mazeGenerator import MazeGenerator
+from mazeEnvironment import Maze
 
 def generate_and_save_mazes_json():
     """Generates a fixed set of Random (Density-based) mazes and saves them to a JSON file."""
 
     maze_generator = MazeGenerator()
     
-    # --- Random Maze Parameters (Density-based) ---
-    # Used for testing the impact of obstacle density and size.
     random_maze_parameters = [
         # (size, density, num_mazes_to_generate)
-        ((5, 5), 0.1, 5),
-        ((5, 5), 0.3, 5),
-        ((10, 10), 0.1, 5),
-        ((10, 10), 0.2, 5),
-        ((10, 10), 0.3, 5),
-        ((20, 20), 0.1, 5),
-        ((20, 20), 0.2, 5),
-        ((20, 20), 0.3, 5),
-        ((40, 40), 0.1, 5),
-        ((40, 40), 0.2, 5),
-        ((40, 40), 0.3, 5),
-        ((80, 80), 0.1, 5),
-        ((80, 80), 0.2, 5),
-        ((80, 80), 0.3, 5),
-        ((160, 160), 0.1, 5),
-        ((160, 160), 0.2, 5),
-        ((160, 160), 0.3, 5),
-        ((320, 320), 0.1, 5),
-        ((320, 320), 0.2, 5),
-        ((320, 320), 0.3, 5),
-        ((640, 640), 0.1, 5),
-        ((640, 640), 0.2, 5),
-        ((640, 640), 0.3, 5),
-        ((1024, 1024), 0.1, 5),
-        ((1024, 1024), 0.2, 5),
-        ((1024, 1024), 0.3, 5),
+        # Total tests per density: 5 * 5 = 25
+        # Total unique mazes: 5 sizes * 3 densities * 5 mazes = 75
+        
+        # ----------------------------------
+        # 4x4 (Trivial)
+        ((4, 4), 0.1, 3),
+        ((4, 4), 0.2, 3),
+        ((4, 4), 0.3, 3),
+        
+        # 8x8 (Small)
+        ((8, 8), 0.1, 3),
+        ((8, 8), 0.2, 3),
+        ((8, 8), 0.3, 3),
+        
+        # 16x16 (Medium)
+        ((16, 16), 0.1, 3),
+        ((16, 16), 0.2, 3),
+        ((16, 16), 0.3, 3),
+        
+        # 32x32 (Large - Performance Threshold)
+        ((32, 32), 0.1, 3),
+        ((32, 32), 0.2, 3),
+        ((32, 32), 0.3, 3),
+        
+        # 64x64 (Extreme - Context/Failure Point)
+        ((64, 64), 0.1, 3),
+        ((64, 64), 0.2, 3),
+        ((64, 64), 0.3, 3),
+        
+        # 128x128 (Massive - Beyond Typical Use Cases) - Using actual LLM on this. Mock LLM for anything larger
+        ((128, 128), 0.1, 3),
+        ((128, 128), 0.2, 3),
+        ((128, 128), 0.3, 3),
     ]
 
     mazes_data = []
