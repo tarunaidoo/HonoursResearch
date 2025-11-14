@@ -1,0 +1,10 @@
+simplified_algorithm,extrapolated_success_percent
+35-chain-of,0.0
+35-few-shot,100.0
+35-zero-shot,100.0
+4-chain-of,0.0
+4-few-shot,100.0
+4-zero-shot,100.0
+4o-chain-of,0.0
+4o-few-shot,100.0
+4o-zero-shot,100.0
